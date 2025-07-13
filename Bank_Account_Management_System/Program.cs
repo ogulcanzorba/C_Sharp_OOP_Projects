@@ -38,7 +38,7 @@ namespace BankAccountManagement
             return accountnumber;
         }
 
-        public virtual void Deposit(decimal amount) 
+        public virtual void Deposit(decimal amount, Bank bank) 
         { 
             if(amount <= 0)
             {
@@ -49,9 +49,12 @@ namespace BankAccountManagement
             {
                 Balance += amount;
                 Console.WriteLine($"Deposited ${amount:F2}. New balance: ${Balance:F2}"); // 2 digits after '.' eg: $123.56
+                
+                // Record transaction
+                bank.RecordTransaction("Deposit", amount, AccountNumber);
             }
         }
-        public virtual void Withdraw(decimal amount) 
+        public virtual void Withdraw(decimal amount, Bank bank) 
         {
             if (amount <= 0)
             {
@@ -67,8 +70,11 @@ namespace BankAccountManagement
             
             Balance -= amount;
             Console.WriteLine($"Withdrawn ${amount:F2}. New balance: ${Balance:F2}");
+            
+            // Record transaction
+            bank.RecordTransaction("Withdraw", amount, AccountNumber);
         }
-        public virtual void Transfer(BankAccount toAccount, decimal amount) 
+        public virtual void Transfer(BankAccount toAccount, decimal amount, Bank bank) 
         {
             if (amount <= 0)
             {
@@ -88,6 +94,9 @@ namespace BankAccountManagement
             Balance -= amount;
             toAccount.Balance += amount;
             Console.WriteLine($"Transferred ${amount:F2} to account {toAccount.AccountNumber}");                                   
+            
+            // Record transaction
+            bank.RecordTransaction("Transfer", amount, AccountNumber, toAccount.AccountNumber);
         }
         public virtual void PrintAccountSummary() 
         {
@@ -106,7 +115,24 @@ namespace BankAccountManagement
             InterestRate = rate;
         }
 
-        public void ApplyInterest() { /* ... */ }
+        public void ApplyInterest(Bank bank)
+        {
+            decimal interest = Balance * (InterestRate / 100);
+            Balance += interest;
+            Console.WriteLine($"Interest applied: ${interest:F2}. New balance: ${Balance:F2}");
+            
+            // Record interest transaction
+            bank.RecordTransaction("Interest", interest, AccountNumber);
+        }
+
+        public override void PrintAccountSummary()
+        {
+            Console.WriteLine($"Account Number: {AccountNumber}");
+            Console.WriteLine($"Account Holder: {AccountHolderName}");
+            Console.WriteLine($"Balance: ${Balance:F2}");
+            Console.WriteLine($"Interest Rate: {InterestRate:F2}%");
+            Console.WriteLine($"Account Type: Savings");
+        }
     }
 
     public class CheckingAccount : BankAccount
@@ -118,7 +144,46 @@ namespace BankAccountManagement
             OverdraftLimit = limit;
         }
 
-        public override void Withdraw(decimal amount) { /* Consider overdraft */ }
+        public override void Withdraw(decimal amount, Bank bank)
+        {
+            if (amount <= 0)
+            {
+                Console.WriteLine("Withdrawal amount must be positive.");
+                return;
+            }
+            
+            decimal availableBalance = Balance + OverdraftLimit;
+            if (amount > availableBalance)
+            {
+                Console.WriteLine($"Insufficient funds. Available balance (including overdraft): ${availableBalance:F2}");
+                return;
+            }
+            
+            Balance -= amount;
+            Console.WriteLine($"Withdrawn ${amount:F2}. New balance: ${Balance:F2}");
+            
+            if (Balance < 0)
+            {
+                Console.WriteLine($"Warning: Account is overdrawn by ${Math.Abs(Balance):F2}");
+            }
+            
+            // Record transaction
+            bank.RecordTransaction("Withdraw", amount, AccountNumber);
+        }
+
+        public override void PrintAccountSummary()
+        {
+            Console.WriteLine($"Account Number: {AccountNumber}");
+            Console.WriteLine($"Account Holder: {AccountHolderName}");
+            Console.WriteLine($"Balance: ${Balance:F2}");
+            Console.WriteLine($"Overdraft Limit: ${OverdraftLimit:F2}");
+            Console.WriteLine($"Account Type: Checking");
+            
+            if (Balance < 0)
+            {
+                Console.WriteLine($"Overdrawn by: ${Math.Abs(Balance):F2}");
+            }
+        }
     }
 
     public class Transaction
@@ -153,6 +218,14 @@ namespace BankAccountManagement
         {
             return Accounts.FirstOrDefault(a => a.AccountNumber == accountNumber); // FirstOrDefault is a LINQ (Language Integrated Query) method and also a=> a is a lambda method
         }
+
+        // Add transaction recording method
+        public void RecordTransaction(string type, decimal amount, string fromAccount, string toAccount = "")
+        {
+            var transaction = new Transaction(DateTime.Now, amount, type, fromAccount, toAccount);
+            Transactions.Add(transaction);
+        }
+
         public void DisplayAllAccounts() 
         {
             if (Accounts.Count == 0)
@@ -182,7 +255,8 @@ namespace BankAccountManagement
                 Console.WriteLine($"Type: {transaction.Type}");
                 Console.WriteLine($"Amount: ${transaction.Amount:F2}");
                 Console.WriteLine($"From: {transaction.FromAccount}");
-                Console.WriteLine($"To: {transaction.ToAccount}");
+                if (!string.IsNullOrEmpty(transaction.ToAccount))
+                    Console.WriteLine($"To: {transaction.ToAccount}");
                 Console.WriteLine("---");
             }
         }
@@ -204,7 +278,9 @@ namespace BankAccountManagement
                 Console.WriteLine("4. Transfer Money");
                 Console.WriteLine("5. View Account Summary");
                 Console.WriteLine("6. View All Accounts");
-                Console.WriteLine("7. Exit");
+                Console.WriteLine("7. View Transaction History");
+                Console.WriteLine("8. Apply Interest (Savings)");
+                Console.WriteLine("9. Exit");
                 Console.Write("Choose an option: ");
                 string choice = Console.ReadLine();
 
@@ -214,13 +290,55 @@ namespace BankAccountManagement
                         Console.Write("Enter account holder name: ");
                         string holdername = Console.ReadLine() ?? "";
                         
-                        BankAccount newaccount = new BankAccount(holdername);
+                        Console.WriteLine("Select account type:");
+                        Console.WriteLine("1. Regular Account");
+                        Console.WriteLine("2. Savings Account");
+                        Console.WriteLine("3. Checking Account");
+                        Console.Write("Choose account type: ");
+                        string accountType = Console.ReadLine();
+                        
+                        BankAccount newaccount;
+                        switch (accountType)
+                        {
+                            case "1":
+                                newaccount = new BankAccount(holdername);
+                                break;
+                            case "2":
+                                Console.Write("Enter interest rate (%): ");
+                                if (decimal.TryParse(Console.ReadLine(), out decimal interestRate))
+                                {
+                                    newaccount = new SavingsAccount(holdername, interestRate);
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Invalid interest rate. Creating regular account.");
+                                    newaccount = new BankAccount(holdername);
+                                }
+                                break;
+                            case "3":
+                                Console.Write("Enter overdraft limit: ");
+                                if (decimal.TryParse(Console.ReadLine(), out decimal overdraftLimit))
+                                {
+                                    newaccount = new CheckingAccount(holdername, overdraftLimit);
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Invalid overdraft limit. Creating regular account.");
+                                    newaccount = new BankAccount(holdername);
+                                }
+                                break;
+                            default:
+                                Console.WriteLine("Invalid choice. Creating regular account.");
+                                newaccount = new BankAccount(holdername);
+                                break;
+                        }
+                        
                         bank.CreateAccount(newaccount);
                         break;
 
                     case "2":
                         Console.Write("Enter account number: ");
-                        string depositAccount = Console.ReadLine();
+                        string depositAccount = Console.ReadLine() ?? "";
                         var depositAcc = bank.FindAccount(depositAccount);
                         
                         if (depositAcc != null)
@@ -228,7 +346,7 @@ namespace BankAccountManagement
                             Console.Write("Enter amount to deposit: ");
                             if (decimal.TryParse(Console.ReadLine(), out decimal depositAmount))
                             {
-                                depositAcc.Deposit(depositAmount);
+                                depositAcc.Deposit(depositAmount, bank);
                             }
                             else
                             {
@@ -243,7 +361,7 @@ namespace BankAccountManagement
 
                     case "3":
                         Console.Write("Enter account number: ");
-                        string withdrawAccount = Console.ReadLine();
+                        string withdrawAccount = Console.ReadLine() ?? "";
                         var withdrawAcc = bank.FindAccount(withdrawAccount);
                         
                         if (withdrawAcc != null)
@@ -251,7 +369,7 @@ namespace BankAccountManagement
                             Console.Write("Enter amount to withdraw: ");
                             if (decimal.TryParse(Console.ReadLine(), out decimal withdrawAmount))
                             {
-                                withdrawAcc.Withdraw(withdrawAmount);
+                                withdrawAcc.Withdraw(withdrawAmount, bank);
                             }
                             else
                             {
@@ -266,11 +384,11 @@ namespace BankAccountManagement
 
                     case "4":
                         Console.Write("Enter source account number: ");
-                        string fromAccount = Console.ReadLine();
+                        string fromAccount = Console.ReadLine() ?? "";
                         var fromAcc = bank.FindAccount(fromAccount);
                         
                         Console.Write("Enter destination account number: ");
-                        string toAccount = Console.ReadLine();
+                        string toAccount = Console.ReadLine() ?? "";
                         var toAcc = bank.FindAccount(toAccount);
                         
                         if (fromAcc != null && toAcc != null)
@@ -278,7 +396,7 @@ namespace BankAccountManagement
                             Console.Write("Enter amount to transfer: ");
                             if (decimal.TryParse(Console.ReadLine(), out decimal transferAmount))
                             {
-                                fromAcc.Transfer(toAcc, transferAmount);
+                                fromAcc.Transfer(toAcc, transferAmount, bank);
                             }
                             else
                             {
@@ -293,7 +411,7 @@ namespace BankAccountManagement
 
                     case "5":
                         Console.Write("Enter account number: ");
-                        string summaryAccount = Console.ReadLine();
+                        string summaryAccount = Console.ReadLine() ?? "";
                         var summaryAcc = bank.FindAccount(summaryAccount);
                         
                         if (summaryAcc != null)
@@ -310,7 +428,27 @@ namespace BankAccountManagement
                         bank.DisplayAllAccounts();
                         break;
 
+
                     case "7":
+                        bank.DisplayTransactionHistory();
+                        break;
+
+                    case "8":
+                        Console.Write("Enter savings account number: ");
+                        string interestAccount = Console.ReadLine() ?? "";
+                        var interestAcc = bank.FindAccount(interestAccount);
+                        
+                        if (interestAcc is SavingsAccount savingsAcc)
+                        {
+                            savingsAcc.ApplyInterest(bank);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Account not found or not a savings account.");
+                        }
+                        break;
+                        
+                    case "9":
                         running = false;
                         Console.WriteLine("Goodbye!");
                         break;
